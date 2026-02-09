@@ -4,12 +4,14 @@ Color management functionality for Revit elements
 Provides tools for color splashing elements based on parameter values
 """
 
-from pyrevit import routes, DB
 import json
 import logging
 import random
 from collections import defaultdict
-from .utils import normalize_string
+
+from pyrevit import DB, routes
+
+from .utils import get_element_id_value, normalize_string
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +209,7 @@ def get_parameter_value_safe(element, parameter_name):
             elif param.StorageType == DB.StorageType.ElementId:
                 elem_id = param.AsElementId()
                 if elem_id and elem_id != DB.ElementId.InvalidElementId:
-                    value = str(elem_id.IntegerValue)
+                    value = str(get_element_id_value(elem_id))
                 else:
                     value = "No Value"
             else:
@@ -223,7 +225,7 @@ def get_parameter_value_safe(element, parameter_name):
         logger.debug(
             "Error getting parameter %s from element %s: %s",
             parameter_name,
-            element.Id.IntegerValue,
+            get_element_id_value(element.Id),
             e,
         )
         return "No Value"
@@ -462,11 +464,31 @@ def get_parameter_value_for_sorting(element, parameter_name):
     Returns:
         tuple: (raw_value, display_value) for sorting and display
     """
+    # BuiltInParameter mapping for common parameters that have HasValue=False
+    # in element.Parameters but are accessible via get_Parameter()
+    BUILTIN_PARAM_MAP = {
+        "Family Name": DB.BuiltInParameter.ELEM_FAMILY_PARAM,
+        "Type Name": DB.BuiltInParameter.ELEM_TYPE_PARAM,
+        "Family and Type": DB.BuiltInParameter.ELEM_FAMILY_AND_TYPE_PARAM,
+    }
+
     try:
         # Try instance parameters first
         for param in element.Parameters:
             if param.Definition.Name == parameter_name:
                 if not param.HasValue:
+                    # For parameters like "Family Name" / "Type Name" that show
+                    # HasValue=False, try the BuiltInParameter equivalent
+                    if parameter_name in BUILTIN_PARAM_MAP:
+                        try:
+                            builtin_param = element.get_Parameter(
+                                BUILTIN_PARAM_MAP[parameter_name]
+                            )
+                            if builtin_param and builtin_param.HasValue:
+                                display_value = builtin_param.AsValueString() or "None"
+                                return (display_value, display_value)
+                        except Exception:
+                            pass
                     return ("None", "None")
 
                 if param.StorageType == DB.StorageType.Double:
@@ -851,7 +873,7 @@ def color_elements_by_parameter(
                     except Exception as e:
                         logger.warning(
                             "Failed to color element %s: %s",
-                            element.Id.IntegerValue,
+                            get_element_id_value(element.Id),
                             e,
                         )
 
@@ -968,7 +990,7 @@ def clear_element_colors(doc, category_name):
                 except Exception as e:
                     logger.warning(
                         "Failed to clear colors for element %s: %s",
-                        element.Id.IntegerValue,
+                        get_element_id_value(element.Id),
                         e,
                     )
 

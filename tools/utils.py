@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Utility functions for MCP tools"""
 
+import json
+
 
 def format_response(response):
     """Helper function to format API responses consistently for MCP tools.
@@ -12,82 +14,40 @@ def format_response(response):
         str: Formatted string response suitable for MCP tool return values
     """
     if isinstance(response, dict):
+        # Check for explicit error first
+        if "error" in response:
+            error_msg = response["error"]
+            if "traceback" in response:
+                return "Error: {}\n\nTraceback:\n{}".format(
+                    error_msg, response["traceback"]
+                )
+            return "Error: {}".format(error_msg)
+
         # Check for different success patterns
         status = response.get("status", "").lower()
         health = response.get("health", "").lower()
-        
-        # Success conditions: status="success" OR status="active" with health="healthy"
-        is_success = (status == "success" or 
-                     (status == "active" and health == "healthy") or
-                     (status == "active" and "revit_available" in response and response["revit_available"]))
-        
+
+        # Explicit success conditions
+        is_success = (
+            status == "success"
+            or (status == "active" and health == "healthy")
+            or (
+                status == "active"
+                and "revit_available" in response
+                and response["revit_available"]
+            )
+        )
+
         if is_success:
-            # For successful responses, return the most relevant data
-            if "output" in response:  # Code execution responses
+            # For code execution responses, return just the output text
+            if "output" in response:
                 return response["output"]
-            elif "message" in response:
-                return response["message"]
-            elif "result" in response:
-                return str(response["result"])
-            elif "data" in response:
-                return str(response["data"])
-            elif status == "active":  # Status check responses
-                # Format status response nicely
-                status_parts = ["=== REVIT STATUS ==="]
-                status_parts.append("Status: {}".format(response.get("status", "Unknown")))
-                status_parts.append("Health: {}".format(response.get("health", "Unknown")))
-                
-                if "api_name" in response:
-                    status_parts.append("API: {}".format(response["api_name"]))
-                if "document_title" in response:
-                    status_parts.append("Document: {}".format(response["document_title"]))
-                if "revit_available" in response:
-                    status_parts.append("Revit Available: {}".format(response["revit_available"]))
-                
-                # Add any other fields that might be present
-                known_fields = {"status", "health", "api_name", "document_title", "revit_available"}
-                other_fields = set(response.keys()) - known_fields
-                if other_fields:
-                    status_parts.append("")
-                    for field in sorted(other_fields):
-                        status_parts.append("{}: {}".format(field.replace("_", " ").title(), response[field]))
-                
-                return "\n".join(status_parts)
-            else:
-                return "Operation completed successfully"
-        else:
-            # Error case - provide verbose debugging information
-            error_msg = response.get("error", "Unknown error occurred")
-            traceback_info = response.get("traceback", "")
-            details = response.get("details", "")
-            status = response.get("status", "unknown")
-            
-            # Build comprehensive error message
-            error_parts = ["=== ERROR DETAILS ==="]
-            error_parts.append("Status: {}".format(status))
-            error_parts.append("Error: {}".format(error_msg))
-            
-            if details:
-                error_parts.append("Details: {}".format(details))
-            
-            if traceback_info:  # Code execution error with traceback
-                error_parts.append("\n=== TRACEBACK ===")
-                error_parts.append(traceback_info)
-            
-            # Add any additional fields that might be helpful for debugging
-            debug_fields = ["code_attempted", "endpoint", "request_data", "response_code"]
-            for field in debug_fields:
-                if field in response:
-                    error_parts.append("{}: {}".format(field.replace("_", " ").title(), response[field]))
-            
-            # Include full response for debugging if it has unexpected fields
-            response_keys = set(response.keys()) - {"error", "traceback", "details", "status", "code_attempted", "endpoint", "request_data", "response_code"}
-            if response_keys:
-                error_parts.append("\n=== ADDITIONAL RESPONSE DATA ===")
-                for key in sorted(response_keys):
-                    error_parts.append("{}: {}".format(key, response[key]))
-            
-            return "\n".join(error_parts)
+            # For all other successful responses, return formatted JSON
+            return json.dumps(response, indent=2, default=str)
+
+        # No error key and no recognized success pattern — treat as success
+        # This handles endpoints like model_info that return data without a status field
+        return json.dumps(response, indent=2, default=str)
     else:
         # If response is already a string (error case from _revit_call)
         return str(response)

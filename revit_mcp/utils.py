@@ -1,9 +1,31 @@
 # -*- coding: utf-8 -*-
-from pyrevit import DB
-import traceback
 import logging
+import traceback
+
+from pyrevit import DB
 
 logger = logging.getLogger(__name__)
+
+# ElementId compatibility for Revit 2024+ (IntegerValue -> Value)
+try:
+    from pyrevit.compat import get_elementid_value_func
+
+    _get_eid_value = get_elementid_value_func()
+except (ImportError, Exception):
+    # Fallback for environments without compat module
+    def _get_eid_value(eid):
+        try:
+            return eid.Value
+        except AttributeError:
+            return eid.IntegerValue
+
+
+def get_element_id_value(element_id):
+    """Get numeric value from ElementId, compatible with Revit 2024+"""
+    try:
+        return int(_get_eid_value(element_id))
+    except Exception:
+        return -1
 
 
 def normalize_string(text):

@@ -4,14 +4,14 @@ Views Module for Revit MCP
 Handles view export and image generation functionality
 """
 
-from pyrevit import routes, revit, DB
-import tempfile
-import os
 import base64
 import logging
-from System.Collections.Generic import List
+import os
+import tempfile
 
-from utils import normalize_string, get_element_name
+from pyrevit import DB, revit, routes
+from System.Collections.Generic import List
+from utils import get_element_id_value, get_element_name, normalize_string
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,7 @@ def register_views_routes(api):
             view_info = {
                 "view_name": get_element_name(current_view),
                 "view_type": str(current_view.ViewType),
-                "view_id": current_view.Id.IntegerValue,
+                "view_id": get_element_id_value(current_view.Id),
                 "is_template": (
                     current_view.IsTemplate
                     if hasattr(current_view, "IsTemplate")
@@ -403,7 +403,7 @@ def register_views_routes(api):
             for elem in elements:
                 try:
                     element_info = {
-                        "element_id": elem.Id.IntegerValue,
+                        "element_id": get_element_id_value(elem.Id),
                         "name": get_element_name(elem),
                         "element_type": elem.GetType().Name,
                     }
@@ -411,7 +411,9 @@ def register_views_routes(api):
                     # Add category information
                     if elem.Category:
                         element_info["category"] = elem.Category.Name
-                        element_info["category_id"] = elem.Category.Id.IntegerValue
+                        element_info["category_id"] = get_element_id_value(
+                            elem.Category.Id
+                        )
                     else:
                         element_info["category"] = "Unknown"
                         element_info["category_id"] = None
@@ -426,7 +428,9 @@ def register_views_routes(api):
                             if level_id != DB.ElementId.InvalidElementId:
                                 level_elem = doc.GetElement(level_id)
                                 element_info["level"] = get_element_name(level_elem)
-                                element_info["level_id"] = level_id.IntegerValue
+                                element_info["level_id"] = get_element_id_value(
+                                    level_id
+                                )
                             else:
                                 element_info["level"] = None
                                 element_info["level_id"] = None
@@ -468,7 +472,8 @@ def register_views_routes(api):
                     # Skip elements that cause errors but log the issue
                     logger.warning(
                         "Could not process element {}: {}".format(
-                            elem.Id.IntegerValue if elem else "Unknown", str(elem_error)
+                            get_element_id_value(elem.Id) if elem else "Unknown",
+                            str(elem_error),
                         )
                     )
                     continue
@@ -490,7 +495,7 @@ def register_views_routes(api):
             result = {
                 "status": "success",
                 "view_name": get_element_name(current_view),
-                "view_id": current_view.Id.IntegerValue,
+                "view_id": get_element_id_value(current_view.Id),
                 "total_elements": len(elements_info),
                 "elements": elements_info,
                 "elements_by_category": elements_by_category,

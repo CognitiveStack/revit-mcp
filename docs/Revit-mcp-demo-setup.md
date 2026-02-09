@@ -10,7 +10,7 @@
 > 
 > **Client Context**: Triviron Holdings - South African construction company specializing in government buildings (schools, courts, community centers)
 
----
+--eyazi
 
 ## Two-Phase Workflow
 
@@ -25,9 +25,7 @@ This project follows a two-phase approach:
 ### Phase 2: Laptop Execution (When Hardware Arrives)
 - Clone the prepared repository
 - Install Revit 2026 + pyRevit
-- Configure and run the demo
-
----
+- Configure and run the de
 
 ## Table of Contents
 
@@ -288,52 +286,61 @@ You'll need this for Claude Desktop configuration.
 
 ## Step 5: Install Python Dependencies
 
-### Create Virtual Environment and Install
+### Install with UV Sync
 
 ```powershell
-cd C:\Projects\revit-mcp-python
+cd C:\Users\charles\projects\revit-mcp-triviron
 
-# Create virtual environment using UV
-uv venv
-
-# Activate it
-.venv\Scripts\activate
-
-# Install requirements
-uv pip install -r requirements.txt
+# UV sync creates .venv and installs all dependencies from pyproject.toml
+uv sync
 ```
 
-### Verify MCP CLI is Available
+### Verify Dependencies
 
 ```powershell
-# Test that mcp CLI works
-uv run --with mcp[cli] mcp --help
+# Verify key packages are available
+uv --directory "C:\Users\charles\projects\revit-mcp-triviron" run python -c "import httpx; import mcp; print('Dependencies OK')"
 ```
+
+> **Note**: The project uses `pyproject.toml` with `uv sync`, not `requirements.txt` with `pip install`. The `requirements.txt` is a reference listing only. `uv sync` reads `pyproject.toml` and the `uv.lock` lockfile.
 
 ---
 
 ## Step 6: Install the pyRevit Extension
 
-The revit-mcp-python repository contains a pyRevit extension that must be installed in Revit.
+The repository contains a pyRevit extension (`revit-mcp-python.extension/`) that must be copied into pyRevit's Extensions directory.
 
-### Option A: Install via pyRevit Extensions Manager (Recommended)
+### Copy Extension to pyRevit
 
-1. Launch Revit 2026
-2. Go to **pyRevit tab** → **Extensions**
-3. Look for "Revit MCP" in the list
-4. Click **Install Extension**
-5. Restart Revit
+```powershell
+# Copy the extension folder to pyRevit's Extensions directory
+# Using PowerShell:
+Copy-Item -Recurse -Force ".\revit-mcp-python.extension" "$env:APPDATA\pyRevit\Extensions\revit-mcp-python.extension"
 
-### Option B: Manual Installation
+# Or using Git Bash:
+cp -r revit-mcp-python.extension "$APPDATA/pyRevit/Extensions/revit-mcp-python.extension"
+```
 
-If not available in the extensions manager:
+### Verify Extension Installed
 
-1. Copy the `revit-mcp-python.extension` folder from the cloned repo
-2. Paste it to: `%APPDATA%\pyRevit\Extensions\`
-3. In Revit, go to **pyRevit tab** → **Settings**
-4. Under "Custom Extension Directories", add the path if needed
-5. Click **Save Settings and Reload**
-6. Restart Revit
+```powershell
+# Confirm the files are in place
+ls "$env:APPDATA\pyRevit\Extensions\revit-mcp-python.extension\"
+```
+
+You should see: `extension.json`, `lib/`, `startup.py`
+
+### Reload pyRevit
+
+In Revit, click the **pyRevit** ribbon tab and click **Reload** (circular arrow icon). This loads the new extension without restarting Revit.
+
+> **Important - Keeping in Sync**: When you modify files in `revit_mcp/` (the backend source), you must re-copy them to both `revit-mcp-python.extension/lib/revit_mcp/` (in the repo) and `%APPDATA%\pyRevit\Extensions\revit-mcp-python.extension\lib\revit_mcp\` (deployed), then reload pyRevit.
+>
+> Quick sync commands:
+> ```bash
+> cp -r revit_mcp/* revit-mcp-python.extension/lib/revit_mcp/
+> cp -r revit_mcp/* "$APPDATA/pyRevit/Extensions/revit-mcp-python.extension/lib/revit_mcp/"
+> ```
 
 ---
 
@@ -391,23 +398,18 @@ Open the file in a text editor and add the MCP server configuration:
 ```json
 {
   "mcpServers": {
-    "Revit Connector": {
+    "revit": {
       "command": "uv",
-      "args": [
-        "run",
-        "--with",
-        "mcp[cli]",
-        "mcp",
-        "run",
-        "C:\\Projects\\revit-mcp-triviron\\main.py"
-      ]
+      "args": ["--directory", "C:/Users/charles/projects/revit-mcp-triviron", "run", "python", "main.py"],
+      "env": {}
     }
   }
 }
 ```
 
 **Important**: 
-- Use double backslashes `\\` in the path
+- The `--directory` flag tells `uv` where to find `pyproject.toml` and the `.venv` with dependencies (like `httpx`). Without it, `uv` cannot resolve the project dependencies and the server will fail with `ModuleNotFoundError: No module named 'httpx'`.
+- Forward slashes `/` work in the path (even on Windows)
 - Update the path to match your actual installation location
 - This references YOUR CognitiveStack fork, not the original repo
 
@@ -603,38 +605,66 @@ Summarize this building's key metrics for a project handover report:
 
 ## Troubleshooting
 
-### "Connection Refused" Error
+### "MCP revit: Server disconnected" in Claude Desktop
+
+This is the most common error. Check the MCP server log at:
+```
+%APPDATA%\Claude\logs\mcp-server-revit.log
+```
+
+**Common causes:**
+
+1. **`ModuleNotFoundError: No module named 'httpx'`**: The Claude Desktop config is missing the `--directory` flag. UV cannot find the project's `.venv` without it. Fix: ensure your config uses `"args": ["--directory", "C:/path/to/project", "run", "python", "main.py"]`
+
+2. **Invalid JSON in config**: Check `%APPDATA%\Claude\claude_desktop_config.json` for syntax errors.
+
+3. **Wrong path**: Ensure the path to the project directory is correct and `main.py` exists there.
+
+### "Connection Refused" Error (curl to Revit)
 
 1. **Is Revit running?** Must have a project open.
-2. **Is Routes Server enabled?** Check pyRevit Settings → Routes
-3. **Check firewall**: Windows might block the port
-4. **Test manually**: Browse to `http://localhost:48884/revit_mcp/status/`
+2. **Is Routes Server enabled?** Check pyRevit Settings → Routes → ensure enabled on port 48884.
+3. **Is the extension loaded?** Files must exist at `%APPDATA%\pyRevit\Extensions\revit-mcp-python.extension\`
+4. **Test manually**: `curl http://localhost:48884/revit_mcp/status/`
 
-### Claude Desktop Doesn't Show Hammer Icon
+### Claude Desktop Doesn't Show Hammer/Tools Icon
 
-1. **Check config syntax**: Valid JSON? Correct paths?
-2. **Restart Claude Desktop completely** (exit from system tray)
-3. **Check Claude Desktop logs**: Help → Show Logs
+1. **Check config path**: `%APPDATA%\Claude\claude_desktop_config.json`
+2. **Restart Claude Desktop completely** (right-click system tray icon → Quit, then reopen)
+3. **Check logs**: `%APPDATA%\Claude\logs\mcp-server-revit.log`
 
-### MCP Tools Not Working
+### "ElementId object has no attribute IntegerValue"
 
-1. **Test MCP server independently**:
-   ```powershell
-   cd C:\Projects\revit-mcp-triviron
-   uv run mcp dev main.py
-   ```
-   Then open `http://127.0.0.1:6274` in browser to test tools.
+This occurs on Revit 2024+ due to an API breaking change. The `revit_mcp/utils.py` file includes a compatibility helper `get_element_id_value()` that uses pyRevit's `compat` module. If you see this error:
 
-2. **Check Python environment**:
-   ```powershell
-   uv pip list  # Should show mcp, httpx, etc.
-   ```
+1. Ensure you have the latest code (with the compat fix)
+2. Re-sync the extension: `cp -r revit_mcp/* "$APPDATA/pyRevit/Extensions/revit-mcp-python.extension/lib/revit_mcp/"`
+3. Reload pyRevit in Revit (pyRevit ribbon → Reload)
+
+### Tools Return "Operation completed successfully" But No Data
+
+This was caused by `tools/utils.py:format_response()` discarding structured response data. The fix returns full JSON for successful responses. If you see this:
+
+1. Ensure you have the latest `tools/utils.py`
+2. Restart Claude Desktop to pick up the change
+
+### View Export Shows No Image
+
+If `get_revit_view` returns text instead of an image, ensure `tools/view_tools.py` returns the `Image` object directly (not `str(response)`). The fix removes the `-> str` return type annotation.
+
+### After Code Changes: What to Reload
+
+| What Changed | What to Reload |
+|-------------|----------------|
+| `revit_mcp/*.py` (backend) | Sync to extension folder + Reload pyRevit in Revit |
+| `tools/*.py` or `main.py` (MCP server) | Restart Claude Desktop |
+| Both | Sync + Reload pyRevit + Restart Claude Desktop |
 
 ### pyRevit Not Loading
 
 1. Check pyRevit logs: `%APPDATA%\pyRevit\`
 2. Ensure correct pyRevit version for Revit 2026
-3. Try: pyRevit tab → Settings → Reload pyRevit
+3. Try: pyRevit tab → Reload
 
 ### Port 48884 Already in Use
 
@@ -643,7 +673,7 @@ If running multiple Revit instances, each uses a different port:
 - 2nd instance: 48885
 - etc.
 
-Update your MCP server configuration if needed.
+Update `REVIT_PORT` in `main.py` if needed.
 
 ---
 
@@ -752,16 +782,19 @@ After proving the concept, discuss with Triviron about enterprise deployment:
 | `get_revit_status` | Check if Revit MCP is active | ⭐ Essential |
 | `get_revit_model_info` | Get comprehensive model info | ⭐ Essential |
 | `list_levels` | Get all levels with elevations | High |
-| `get_revit_view` | Export view as image | ⭐ Essential |
-| `list_revit_views` | Get all exportable views | High |
-| `place_family` | Place a family instance | Advanced |
-| `list_families` | Get available family types | Medium |
-| `list_family_categories` | Get family categories | Medium |
+| `get_revit_view` | Export view as PNG image | ⭐ Essential |
+| `list_revit_views` | Get all exportable views by type | High |
+| `place_family` | Place a family instance at coordinates | Advanced |
+| `list_families` | Get available family types (up to 50) | Medium |
+| `list_family_categories` | Get family categories with counts | Medium |
 | `get_current_view_info` | Info about active view | High |
-| `get_current_view_elements` | Elements in current view | High |
-| `create_point_based_element` | Create doors, windows, etc. | Advanced |
-| `color_splash` | Color elements by parameter | Visual Impact |
-| `execute_revit_code` | Run IronPython in Revit | Power User |
+| `get_current_view_elements` | Elements in current view with locations | High |
+| `color_splash` | Color elements by parameter value | Visual Impact |
+| `clear_colors` | Remove color overrides from a category | Visual Impact |
+| `list_category_parameters` | List parameters available for coloring | Medium |
+| `execute_revit_code` | Run IronPython code in Revit context | Power User |
+
+> **Note on Revit 2024+ Compatibility**: The backend uses `get_element_id_value()` from `revit_mcp/utils.py` which wraps pyRevit's `compat` module to handle the `ElementId.IntegerValue` → `ElementId.Value` breaking change in Revit 2024+.
 
 ---
 
@@ -776,13 +809,17 @@ After proving the concept, discuss with Triviron about enterprise deployment:
 ### Phase 2: Laptop Execution (When Arrives)
 - [ ] Laptop charged / plugged in
 - [ ] Revit 2026 installed and activated (30-day trial)
-- [ ] pyRevit v5.1.0+ installed and loading
-- [ ] Routes Server enabled in pyRevit settings
+- [ ] pyRevit v5.1.0+ installed and loading (pyRevit ribbon visible)
+- [ ] Routes Server enabled in pyRevit Settings → Routes (port 48884)
 - [ ] revit-mcp-triviron cloned from CognitiveStack GitHub
-- [ ] UV installed, Python dependencies installed
-- [ ] Claude Desktop configured with `claude_desktop_config.json`
-- [ ] School Project downloaded and opened in Revit
-- [ ] Connection tested: `http://localhost:48884/revit_mcp/status/`
+- [ ] UV installed (`uv --version`), dependencies installed (`uv sync`)
+- [ ] Extension copied to `%APPDATA%\pyRevit\Extensions\revit-mcp-python.extension\`
+- [ ] pyRevit reloaded in Revit after extension install
+- [ ] Connection verified: `curl http://localhost:48884/revit_mcp/status/`
+- [ ] Claude Desktop configured with `claude_desktop_config.json` (using `--directory` flag)
+- [ ] Claude Desktop restarted and shows tools icon
+- [ ] Sample project opened in Revit
+- [ ] Test prompt in Claude Desktop: "Are you connected to Revit?"
 - [ ] All demo prompts verified working
 - [ ] Backup screen recording ready (OBS)
 - [ ] Presentation materials for Triviron prepared
@@ -807,4 +844,5 @@ After proving the concept, discuss with Triviron about enterprise deployment:
 
 *Document prepared by CogStack*  
 *https://cogstack.co.za*  
-*Last updated: February 2026*
+*Last updated: 9 February 2026*  
+*Updated with: Revit 2024+ ElementId compatibility fix, Claude Desktop config fix (--directory flag), extension sync workflow, expanded troubleshooting*

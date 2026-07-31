@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, Union
 # Use stateless_http=True and json_response=True for better compatibility
 mcp = FastMCP(
     "Revit MCP Server", 
-    host="127.0.0.1", 
+    host="0.0.0.0", 
     port=8000,
     stateless_http=True,
     json_response=True

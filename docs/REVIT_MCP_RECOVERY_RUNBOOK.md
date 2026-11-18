@@ -24,7 +24,7 @@ port 8000
         | HTTP localhost
         v
 pyRevit Routes
-port 48884
+port 48884 (or 48885, 48886, ... — see below)
         |
         v
 Autodesk Revit
@@ -61,13 +61,93 @@ Health endpoint:
 
 http://localhost:48884/revit_mcp/status/
 
+pyRevit gives the first Revit session port 48884 and each extra session the
+next port: 48885, 48886, and so on. If a second Revit is open, or an earlier
+Revit session did not shut down cleanly, the model you want may be on 48885.
+
+FastMCP finds the port by itself: it tries 48884-48889, uses the first one
+whose /revit_mcp/status/ answers, and looks again whenever Revit stops
+answering. It can therefore start before Revit is open.
+
+To pin one port instead, set the REVIT_PORT environment variable before
+starting FastMCP, for example:
+
+$env:REVIT_PORT = "48885"
+
+or set $RevitPort in scripts\start-revit-mcp.ps1.
+
 Port 8000 — Claude-facing FastMCP server
 
-This is started separately from Windows PowerShell with:
+This starts automatically at Windows sign-in through the scheduled task
+described in the next section.
 
-uv run python main.py --http
+Stopping FastMCP stops port 8000 but does not stop Revit or the pyRevit
+Routes service.
 
-Stopping FastMCP with Ctrl+C stops port 8000 but does not stop Revit orthe pyRevit Routes service on port 48884.
+Automatic startup — scheduled task
+
+Windows Task Scheduler task:
+
+CogStack - Revit MCP Server
+
+Trigger: at sign-in of LAPTOP\charles (not on wake from sleep or unlock).
+
+It runs:
+
+C:\Users\charles\Documents\Autodesk\MCP_Repos\start-revit-mcp.ps1
+
+which calls the version-controlled script in this repository:
+
+scripts\start-revit-mcp.ps1
+
+That script runs uv run python main.py --http in a minimized window titled
+"Revit MCP Server :8000". If the server stops or crashes, the script restarts
+it after 10 seconds. Closing the window stops it for good, until the task is
+started again.
+
+How to check it is running
+
+Task Manager → Processes → Apps: "Windows PowerShell". Expand it to see the
+window "Revit MCP Server :8000". (Details tab: powershell.exe, uv.exe,
+python.exe.)
+
+Task Scheduler → Task Scheduler Library → "CogStack - Revit MCP Server":
+Status should be Running.
+
+From PowerShell:
+
+(Get-ScheduledTask -TaskName "CogStack - Revit MCP Server").State
+Test-NetConnection localhost -Port 8000 | Select-Object TcpTestSucceeded
+
+To start it without signing out and in again:
+
+Start-ScheduledTask -TaskName "CogStack - Revit MCP Server"
+
+Do not start it while a manually started server is running: both would try
+to use port 8000.
+
+Battery settings
+
+By default, Task Scheduler does not start the task on battery power and stops
+it when the laptop switches to battery. To let it run on battery, run this in
+an Administrator PowerShell (the task runs with highest privileges, so
+changing it needs elevation):
+
+$t = Get-ScheduledTask -TaskName "CogStack - Revit MCP Server"
+$t.Settings.DisallowStartIfOnBatteries = $false
+$t.Settings.StopIfGoingOnBatteries = $false
+Set-ScheduledTask -InputObject $t
+
+Do not run uv from WSL in this repository
+
+The repository lives on the Windows drive, so WSL and Windows share its .venv
+folder. Running uv run or uv sync from WSL replaces the Windows .venv with a
+Linux one, and Windows uv then fails with:
+
+error: failed to remove file `...\.venv\lib64`: Access is denied. (os error 5)
+
+To recover, delete .venv from WSL (rm .venv/lib64, then remove the folder)
+and let Windows uv rebuild it on the next start.
 
 Step 1 — Ensure Revit is running
 
@@ -103,13 +183,26 @@ The exact document_title depends on the model currently open in Revit.
 
 If port 48884 fails
 
-If the command gives a timeout or connection failure, troubleshoot theRevit / pyRevit layer before continuing.
+Try the next ports first:
+
+curl.exe -i http://localhost:48885/revit_mcp/status/
+
+A healthy answer there means Revit is on 48885. FastMCP will find it by
+itself; no change is needed.
+
+If no port answers, troubleshoot the Revit / pyRevit layer before continuing.
 
 FastMCP cannot successfully control Revit if the pyRevit Routes API isunavailable.
 
 Step 3 — Start or restart FastMCP
 
-Open Windows PowerShell.
+Normally FastMCP is already running from the scheduled task (see "How to
+check it is running"). If it is not, start the task:
+
+Start-ScheduledTask -TaskName "CogStack - Revit MCP Server"
+
+To run it by hand instead, for example to watch the output, open Windows
+PowerShell.
 
 Change to the repository:
 
@@ -145,6 +238,8 @@ Claude Code will lose revit-triviron connectivity
 Restart with:
 
 uv run python main.py --http
+
+or start the scheduled task again.
 
 Step 4 — Verify FastMCP from WSL
 
@@ -275,12 +370,17 @@ FastMCP is not running
 
 Start FastMCP:
 
+Start-ScheduledTask -TaskName "CogStack - Revit MCP Server"
+
+or by hand:
+
 cd C:\Users\charles\Documents\Autodesk\MCP_Repos\revit-mcp-triviron
 uv run python main.py --http
 
 Scenario B — Port 48884 unavailable
 
-The problem is below FastMCP.
+Check 48885 and up first: Revit may be on another port (see "Port 48884 —
+Revit / pyRevit bridge"). If none answer, the problem is below FastMCP.
 
 Check:
 
@@ -387,8 +487,8 @@ Recovery checklist
 
 [ ] Revit running
 [ ] Correct Revit model open
-[ ] pyRevit Routes :48884 returns HTTP 200
-[ ] FastMCP started with `uv run python main.py --http`
+[ ] pyRevit Routes :48884 (or :48885+) returns HTTP 200
+[ ] FastMCP running (scheduled task "CogStack - Revit MCP Server", or `uv run python main.py --http`)
 [ ] Uvicorn listening on 0.0.0.0:8000
 [ ] WSL can reach Windows :8000
 [ ] Claude Code shows revit-triviron connected
@@ -415,11 +515,14 @@ The local repository folder and Claude MCP name retain the historicalrevit-mcp-t
 
 Future improvements
 
-The FastMCP process currently requires manual startup from Windows PowerShell.
+FastMCP now starts automatically at sign-in, restarts itself if it stops,
+and finds the Revit port by itself (validated 2026-11-19 with Revit on
+port 48885 and HFS-ARC open).
 
-A future improvement may run FastMCP automatically using an appropriateWindows startup or service mechanism.
+The task starts only at sign-in. If the window is closed, FastMCP stays off
+until the task is started again or the next sign-in.
 
-A second possible improvement is changing the Claude Code MCP endpoint fromthe numeric Tailscale IP:
+A possible improvement is changing the Claude Code MCP endpoint fromthe numeric Tailscale IP:
 
 http://100.65.78.118:8000/mcp/
 
@@ -428,5 +531,3 @@ to the MagicDNS endpoint:
 http://laptop.tailfd6deb.ts.net:8000/mcp/
 
 Both were successfully tested during recovery.
-
-Do not introduce automatic startup or further deployment changes until thecurrent manual deployment and its failure behaviour have been deliberatelyreviewed.

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import sys
 import httpx
 import anyio
@@ -18,8 +19,51 @@ mcp = FastMCP(
 
 # Configuration
 REVIT_HOST = "localhost"
-REVIT_PORT = 48884  # Default pyRevit Routes port
-BASE_URL = f"http://{REVIT_HOST}:{REVIT_PORT}/revit_mcp"
+# pyRevit Routes gives the first Revit session port 48884 and each extra
+# session the next port (48885, 48886, ...). Set REVIT_PORT to pin one port;
+# otherwise the server finds the Revit session itself, so it can start before
+# Revit does and follows Revit if it comes back on a different port.
+_PINNED_PORT = os.environ.get("REVIT_PORT", "").strip()
+_CANDIDATE_PORTS = [int(_PINNED_PORT)] if _PINNED_PORT else list(range(48884, 48890))
+_revit_port = _CANDIDATE_PORTS[0]
+_port_checked = False
+
+
+def _base_url(port: int) -> str:
+    return f"http://{REVIT_HOST}:{port}/revit_mcp"
+
+
+async def _discover_port() -> None:
+    """Point at the first candidate port where pyRevit Routes answers as revit_mcp."""
+    global _revit_port, _port_checked
+    for port in _CANDIDATE_PORTS:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get(f"{_base_url(port)}/status/")
+            if r.status_code == 200 and r.json().get("api_name") == "revit_mcp":
+                if port != _revit_port:
+                    print(f"Revit found on port {port}", file=sys.stderr)
+                _revit_port = port
+                _port_checked = True
+                return
+        except Exception:
+            continue
+
+
+async def _send(method: str, endpoint: str, timeout: float, **kwargs) -> httpx.Response:
+    """Send a request to Revit. If Revit can't be reached, look for it on the
+    other ports and retry once. A connection error means the request was never
+    sent, so retrying a POST can't apply a change twice."""
+    if not _port_checked:
+        await _discover_port()
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                return await client.request(method, f"{_base_url(_revit_port)}{endpoint}", **kwargs)
+        except httpx.ConnectError:
+            if attempt == 2:
+                raise
+            await _discover_port()
 
 
 async def revit_get(endpoint: str, ctx: Context = None, **kwargs) -> Union[Dict, str]:
@@ -35,15 +79,13 @@ async def revit_post(endpoint: str, data: Dict[str, Any], ctx: Context = None, *
 async def revit_image(endpoint: str, ctx: Context = None) -> Union[Image, str]:
     """GET request that returns an Image object"""
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(f"{BASE_URL}{endpoint}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                image_bytes = base64.b64decode(data["image_data"])
-                return Image(data=image_bytes, format="png")
-            else:
-                return f"Error: {response.status_code} - {response.text}"
+        response = await _send("GET", endpoint, timeout=60.0)
+        if response.status_code == 200:
+            data = response.json()
+            image_bytes = base64.b64decode(data["image_data"])
+            return Image(data=image_bytes, format="png")
+        else:
+            return f"Error: {response.status_code} - {response.text}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -52,15 +94,13 @@ async def _revit_call(method: str, endpoint: str, data: Dict = None, ctx: Contex
                      timeout: float = 30.0, params: Dict = None) -> Union[Dict, str]:
     """Internal function handling all HTTP calls"""
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            url = f"{BASE_URL}{endpoint}"
-            
-            if method == "GET":
-                response = await client.get(url, params=params)
-            else:  # POST
-                response = await client.post(url, json=data, headers={"Content-Type": "application/json"})
-            
-            return response.json() if response.status_code == 200 else f"Error: {response.status_code} - {response.text}"
+        if method == "GET":
+            response = await _send("GET", endpoint, timeout=timeout, params=params)
+        else:  # POST
+            response = await _send("POST", endpoint, timeout=timeout, json=data,
+                                   headers={"Content-Type": "application/json"})
+
+        return response.json() if response.status_code == 200 else f"Error: {response.status_code} - {response.text}"
     except Exception as e:
         return f"Error: {e}"
 

@@ -673,7 +673,7 @@ If running multiple Revit instances, each uses a different port:
 - 2nd instance: 48885
 - etc.
 
-Update `REVIT_PORT` in `main.py` if needed.
+The MCP server finds the right port by itself: it tries 48884–48889 and uses the first one where `/revit_mcp/status/` answers, and looks again if Revit stops answering. To pin one port instead, set the `REVIT_PORT` environment variable before starting the server (PowerShell: `$env:REVIT_PORT = "48885"`), or set `$RevitPort` in `scripts/start-revit-mcp.ps1`.
 
 ---
 

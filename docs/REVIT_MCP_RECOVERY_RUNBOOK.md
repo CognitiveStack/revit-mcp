@@ -43,11 +43,11 @@ laptop-wsl
 
 Claude Code currently connects to:
 
-http://100.65.78.118:8000/mcp/
+http://100.65.78.118:8000/mcp
 
 The MagicDNS equivalent is:
 
-http://laptop.tailfd6deb.ts.net:8000/mcp/
+http://laptop.tailfd6deb.ts.net:8000/mcp
 
 Important distinction
 
@@ -101,8 +101,16 @@ which calls the version-controlled script in this repository:
 scripts\start-revit-mcp.ps1
 
 That script runs uv run python main.py --http in a minimized window titled
-"Revit MCP Server :8000". If the server stops or crashes, the script restarts
-it after 10 seconds. Closing the window stops it for good, until the task is
+"Revit MCP Server :8000". It keeps the server healthy:
+
+- If the server stops or crashes, it restarts it after 10 seconds.
+- Every 30 seconds it sends the server a real MCP request. After 3 failures
+  in a row (a server that is running but stuck), it restarts it.
+- Server output goes to logs\server-<time>.out.log and .err.log in this
+  repository; logs older than 14 days are deleted. Read the .err.log for
+  tracebacks.
+
+Closing the window stops it for good, until the task is
 started again.
 
 How to check it is running
@@ -246,7 +254,7 @@ Step 4 — Verify FastMCP from WSL
 From WSL:
 
 curl -i --max-time 5 \
-  http://laptop.tailfd6deb.ts.net:8000/mcp/
+  http://laptop.tailfd6deb.ts.net:8000/mcp
 
 A result such as:
 
@@ -275,7 +283,7 @@ the plain curl request is simply not a complete MCP Streamable HTTP client.
 The numeric Tailscale address can also be tested:
 
 curl -i --max-time 5 \
-  http://100.65.78.118:8000/mcp/
+  http://100.65.78.118:8000/mcp
 
 Failure interpretation
 
@@ -361,7 +369,7 @@ curl.exe -i http://localhost:48884/revit_mcp/status/
 If that succeeds, but this WSL test fails:
 
 curl -i --max-time 5 \
-  http://laptop.tailfd6deb.ts.net:8000/mcp/
+  http://laptop.tailfd6deb.ts.net:8000/mcp
 
 then:
 
@@ -412,6 +420,32 @@ get_revit_status
 If status works, the general MCP transport is healthy.
 
 Investigate the specific MCP tool and its corresponding Revit-side routeinstead of restarting the entire stack immediately.
+
+Scenario E — Port 8000 answers, but Claude Code gets HTTP 500
+
+Symptom in Claude Code:
+
+Failed to reconnect to revit-triviron: HTTP 500
+
+and every MCP request to port 8000 returns "Internal Server Error", while the
+server process is still running.
+
+Cause (seen 2026-11-19 with mcp 1.9.0): in mcp versions before about 1.10,
+one failed request in stateless HTTP mode, for example a client dropping
+its connection mid-request, cancels the task group shared by all requests.
+The process stays up but every later request fails. Upgraded to mcp 1.30.0,
+which catches and logs such errors instead.
+
+The startup script's health check restarts a stuck server within about
+90 seconds. To restart it at once, close the "Revit MCP Server :8000" window
+and run:
+
+Start-ScheduledTask -TaskName "CogStack - Revit MCP Server"
+
+Endpoint path
+
+Since mcp 1.30.0 the endpoint is /mcp (no trailing slash). /mcp/ still
+works through a 307 redirect, but clients should use /mcp.
 
 Network binding requirement
 
@@ -515,19 +549,19 @@ The local repository folder and Claude MCP name retain the historicalrevit-mcp-t
 
 Future improvements
 
-FastMCP now starts automatically at sign-in, restarts itself if it stops,
-and finds the Revit port by itself (validated 2026-11-19 with Revit on
-port 48885 and HFS-ARC open).
+FastMCP now starts automatically at sign-in, restarts itself if it stops or
+gets stuck, logs to logs\, and finds the Revit port by itself (validated
+2026-11-19 with Revit on port 48885 and HFS-ARC open).
 
 The task starts only at sign-in. If the window is closed, FastMCP stays off
 until the task is started again or the next sign-in.
 
 A possible improvement is changing the Claude Code MCP endpoint fromthe numeric Tailscale IP:
 
-http://100.65.78.118:8000/mcp/
+http://100.65.78.118:8000/mcp
 
 to the MagicDNS endpoint:
 
-http://laptop.tailfd6deb.ts.net:8000/mcp/
+http://laptop.tailfd6deb.ts.net:8000/mcp
 
 Both were successfully tested during recovery.
